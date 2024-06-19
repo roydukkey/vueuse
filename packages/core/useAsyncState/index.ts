@@ -1,6 +1,14 @@
 import { noop, promiseTimeout, until } from '@vueuse/shared'
+import type { Fn } from '@vueuse/shared'
 import type { Ref, UnwrapRef } from 'vue-demi'
 import { ref, shallowRef } from 'vue-demi'
+
+/**
+ * Handle overlapping async executions.
+ *
+ * @param cancelCallback The provided callback is invoked whenever a execution of the promise function is triggered before the previous one finished
+ */
+export type AsyncStateOnCancel = (cancelCallback: Fn) => void
 
 export interface UseAsyncStateReturnBase<Data, Params extends any[], Shallow extends boolean> {
   state: Shallow extends true ? Ref<Data> : Ref<UnwrapRef<Data>>
@@ -79,7 +87,7 @@ export interface UseAsyncStateOptions<Shallow extends boolean, D = any> {
  * @param options
  */
 export function useAsyncState<Data, Params extends any[] = [], Shallow extends boolean = true>(
-  promise: Promise<Data> | ((...args: Params) => Promise<Data>),
+  promise: Promise<Data> | ((onCancel: AsyncStateOnCancel, ...args: Params) => Promise<Data>),
   initialState: Data,
   options?: UseAsyncStateOptions<Shallow, Data>,
 ): UseAsyncStateReturn<Data, Params, Shallow> {
@@ -96,8 +104,15 @@ export function useAsyncState<Data, Params extends any[] = [], Shallow extends b
   const isReady = ref(false)
   const isLoading = ref(false)
   const error = shallowRef<unknown | undefined>(undefined)
+  let cancelFn: Fn | undefined
 
   async function execute(delay = 0, ...args: any[]) {
+    if (cancelFn) {
+      const fn = cancelFn
+      cancelFn = undefined
+      fn()
+    }
+
     if (resetOnExecute)
       state.value = initialState
     error.value = undefined
@@ -108,7 +123,12 @@ export function useAsyncState<Data, Params extends any[] = [], Shallow extends b
       await promiseTimeout(delay)
 
     const _promise = typeof promise === 'function'
-      ? promise(...args as Params)
+      ? promise((cancelCallback) => {
+        cancelFn = () => {
+          if (isLoading.value && !isReady.value)
+            cancelCallback()
+        }
+      }, ...args as Params)
       : promise
 
     try {

@@ -7,14 +7,14 @@ describe('useAsyncState', () => {
     expect(useAsyncState).toBeDefined()
   })
 
-  const p1 = (num = 1) => {
+  const p1 = (_onCancel: unknown, num = 1) => {
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve(num)
       }, 50)
     })
   }
-  const p2 = async (id?: string) => {
+  const p2 = async (_onCancel: unknown, id?: string) => {
     if (!id)
       throw new Error('error')
     return id
@@ -82,5 +82,29 @@ describe('useAsyncState', () => {
   it('should work with throwError', async () => {
     const { execute } = useAsyncState(p2, '0', { throwError: true, immediate: false })
     await expect(execute()).rejects.toThrowError('error')
+  })
+
+  it('cancel is called', async () => {
+    const onCancel = vi.fn()
+
+    const { execute, state } = await useAsyncState((cancel, num: number = 1) => {
+      cancel(() => onCancel())
+
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(num)
+        }, 50)
+      })
+    }, 0)
+
+    expect(onCancel).toBeCalledTimes(0)
+
+    await Promise.all([
+      execute(0, 2),
+      execute(0, 4),
+      execute(0, 6),
+    ])
+    expect(onCancel).toBeCalledTimes(2)
+    expect(state.value).toBe(6)
   })
 })
